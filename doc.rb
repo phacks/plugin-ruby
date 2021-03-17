@@ -1,65 +1,23 @@
 require 'set'
 
 module Document
-  Concat =
-    Struct.new(:parts) do
-      def inspect
-        parts.inspect
-      end
-    end
-
-  Indent =
-    Struct.new(:contents) do
-      def inspect
-        "indent(#{contents.inspect})"
-      end
-    end
-
+  Concat = Struct.new(:parts)
+  Indent = Struct.new(:contents)
   Align = Struct.new(:n, :contents)
-
-  Group =
-    Struct.new(:contents, :break) do
-      def inspect
-        "group(#{contents.inspect})"
-      end
-    end
-
+  Group = Struct.new(:contents, :break)
   Fill = Struct.new(:parts)
   IfBreak = Struct.new(:break_contents, :flat_contents)
   LineSuffix = Struct.new(:contents)
   LineSuffixBoundary = Object.new
   BreakParent = Object.new
-
-  class << BreakParent
-    def inspect; '<breakParent>'; end
-  end
-
   Trim = Object.new
   Cursor = Object.new
-
-  class << Cursor
-    def to_str; ''; end
-    def inspect; '<cursor>'; end
-  end
-
   LineType = Struct.new(:soft, :hard, :literal, keyword_init: true)
   Line = LineType.new(soft: false, hard: false, literal: false)
   SoftLine = LineType.new(soft: true, hard: false, literal: false)
-
   HardLineType = LineType.new(soft: false, hard: true, literal: false)
-
-  class << HardLineType
-    def inspect; '<hardline>'; end
-  end
-
   HardLine = Concat.new([HardLineType, BreakParent])
-
   LiteralLineType = LineType.new(soft: false, hard: true, literal: true)
-
-  class << LiteralLineType
-    def inspect; '<literalline>'; end
-  end
-
   LiteralLine = Concat.new([LiteralLineType, BreakParent])
 
   module Builders
@@ -455,6 +413,22 @@ module Document
     end
   end
 end
+
+include Document::Builders
+
+doc = group(concat([
+  group(concat(["class", " ", "Foo"])),
+  indent(concat([
+    line,
+    "1",
+    break_parent
+  ])),
+  hardline,
+  "end"
+]))
+
+puts Document::Printer.new.print(doc)[:formatted]
+exit
 
 require 'json'
 
