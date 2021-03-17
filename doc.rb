@@ -133,7 +133,7 @@ module Document
       BreakPropagator.new.propagate(doc)
 
       pos = 0
-      cmds = [[root_indent, MODE_BREAK, doc]]
+      cmds = [[Indenter.root, MODE_BREAK, doc]]
       out = []
 
       should_remeasure = false
@@ -153,9 +153,9 @@ module Document
         when Cursor
           out << doc
         when Indent
-          cmds << [make_indent(ind), mode, doc.contents]
+          cmds << [Indenter.indent(ind), mode, doc.contents]
         when Align
-          cmds << [make_align(ind, doc.n), mode, doc.contents]
+          cmds << [Indenter.align(ind, doc.n), mode, doc.contents]
         when Trim
           pos -= trim(out)
         when Group
@@ -300,9 +300,9 @@ module Document
         when Concat
           doc.parts.reverse_each { |part| cmds << [ind, mode, part] }
         when Indent
-          cmds << [make_indent(ind), mode, doc.contents]
+          cmds << [Indenter.indent(ind), mode, doc.contents]
         when Align
-          cmds << [make_align(ind, doc.n), mode, doc.contents]
+          cmds << [Indenter.align(ind, doc.n), mode, doc.contents]
         when Trim
           width += trim(out)
         when Group
@@ -354,81 +354,87 @@ module Document
       trimmed
     end
 
-    IndentLevel = Struct.new(:value, :length, :queue, :root, keyword_init: true)
-    IndentPart = Object.new
-    DedentPart = Object.new
-    StringAlignPart = Struct.new(:n)
-    NumberAlignPart = Struct.new(:n)
+    class Indenter
+      IndentLevel = Struct.new(:value, :length, :queue, :root, keyword_init: true)
+      IndentPart = Object.new
+      DedentPart = Object.new
+      StringAlignPart = Struct.new(:n)
+      NumberAlignPart = Struct.new(:n)
 
-    def root_indent
-      IndentLevel.new(value: '', length: 0, queue: [], root: nil)
-    end
+      class << self
+        def root
+          IndentLevel.new(value: '', length: 0, queue: [], root: nil)
+        end
 
-    def make_indent(indent)
-      generate_indent(indent, IndentPart)
-    end
+        def align(indent, n)
+          return indent unless n
+          return IndentLevel.new(value: indent.value, length: indent.length, queue: indent.queue, root: indent) if n == :root
+          return indent.root || Indenter.root if n == -Float::INFINITY
+          return generate_indent(indent, DedentPart) if n.is_a?(Integer) && n < 0
+    
+          generate_indent(indent, n.is_a?(String) ? StringAlignPart.new(n) : NumberAlignPart.new(n))
+        end
 
-    def make_align(indent, n)
-      return indent unless n
-      return IndentLevel.new(value: indent.value, length: indent.length, queue: indent.queue, root: indent) if n == :root
-      return indent.root || root_indent if n == -Float::INFINITY
-      return generate_indent(indent, DedentPart) if n.is_a?(Integer) && n < 0
+        def indent(indent)
+          generate_indent(indent, IndentPart)
+        end
 
-      generate_indent(indent, n.is_a?(String) ? StringAlignPart.new(n) : NumberAlignPart.new(n))
-    end
+        private
 
-    def generate_indent(indent, part)
-      queue = (part == DedentPart ? indent.queue[0...-1] : [*indent.queue, part])
-
-      value = ''
-      length = 0
-      last_spaces = 0
-
-      add_spaces = ->(count) {
-        value << ' ' * count
-        length += count
-      }
-
-      flush_spaces = -> {
-        add_spaces[last_spaces] if last_spaces > 0
-        last_spaces = 0
-      }
-
-      queue.each do |part|
-        case part
-        when IndentPart
+        def generate_indent(indent, part)
+          queue = (part == DedentPart ? indent.queue[0...-1] : [*indent.queue, part])
+    
+          value = ''
+          length = 0
+          last_spaces = 0
+    
+          add_spaces = ->(count) {
+            value << ' ' * count
+            length += count
+          }
+    
+          flush_spaces = -> {
+            add_spaces[last_spaces] if last_spaces > 0
+            last_spaces = 0
+          }
+    
+          queue.each do |part|
+            case part
+            when IndentPart
+              flush_spaces.call
+              add_spaces.call(2)
+            when StringAlignPart
+              flush_spaces.call
+              value += part.n
+              length += part.n.length
+            when NumberAlignPart
+              last_spaces += part.n
+            end
+          end
+    
           flush_spaces.call
-          add_spaces.call(2)
-        when StringAlignPart
-          flush_spaces.call
-          value += part.n
-          length += part.n.length
-        when NumberAlignPart
-          last_spaces += part.n
+          IndentLevel.new(value: value, length: length, queue: queue, root: indent.root)
         end
       end
-
-      flush_spaces.call
-      IndentLevel.new(value: value, length: length, queue: queue, root: indent.root)
     end
   end
 end
 
-include Document::Builders
+# include Document::Builders
 
-doc = group(concat([
-  group(concat(["class", " ", "Foo"])),
-  indent(concat([
-    line,
-    "1",
-    break_parent
-  ])),
-  hardline,
-  "end"
-]))
+# doc = group(concat([
+#   group(concat(["class", " ", "Foo"])),
+#   indent(concat([
+#     line,
+#     "1",
+#     break_parent
+#   ])),
+#   hardline,
+#   "end"
+# ]))
 
-puts Document::Printer.new.print(doc)[:formatted]
-exit
+# puts Document::Printer.new.print(doc)[:formatted]
+# exit
 
 require 'json'
 
@@ -436,10 +442,10 @@ def to_doc(json)
   case json
   when Array
     return json.map { |part| to_doc(part) }
-  when String, false
+  when String
     return json
   end
-  
+
   case json['type']
   when 'align'
     n = json['n']
@@ -455,7 +461,7 @@ def to_doc(json)
   when 'indent'
     Document::Indent.new(to_doc(json['contents']))
   when 'if-break'
-    Document::IfBreak.new(to_doc(json['breakContents']), to_doc(json['flatContents']))
+    Document::IfBreak.new(to_doc(json['breakContents'] || ''), to_doc(json['flatContents'] || ''))
   when 'line-suffix'
     Document::LineSuffix.new(to_doc(json['contents']))
   when 'trim'
