@@ -133,7 +133,7 @@ module Document
       BreakPropagator.new.propagate(doc)
 
       pos = 0
-      cmds = [[Indenter.root, MODE_BREAK, doc]]
+      cmds = [[IndentLevel.new, MODE_BREAK, doc]]
       out = []
 
       should_remeasure = false
@@ -153,9 +153,9 @@ module Document
         when Cursor
           out << doc
         when Indent
-          cmds << [Indenter.indent(ind), mode, doc.contents]
+          cmds << [ind.indent, mode, doc.contents]
         when Align
-          cmds << [Indenter.align(ind, doc.n), mode, doc.contents]
+          cmds << [ind.align(doc.n), mode, doc.contents]
         when Trim
           pos -= trim(out)
         when Group
@@ -300,9 +300,9 @@ module Document
         when Concat
           doc.parts.reverse_each { |part| cmds << [ind, mode, part] }
         when Indent
-          cmds << [Indenter.indent(ind), mode, doc.contents]
+          cmds << [ind.indent, mode, doc.contents]
         when Align
-          cmds << [Indenter.align(ind, doc.n), mode, doc.contents]
+          cmds << [ind.align(doc.n), mode, doc.contents]
         when Trim
           width += trim(out)
         when Group
@@ -354,67 +354,76 @@ module Document
       trimmed
     end
 
-    class Indenter
-      IndentLevel = Struct.new(:value, :length, :queue, :root, keyword_init: true)
+    class IndentLevel
       IndentPart = Object.new
       DedentPart = Object.new
+
       StringAlignPart = Struct.new(:n)
       NumberAlignPart = Struct.new(:n)
 
-      class << self
-        def root
-          IndentLevel.new(value: '', length: 0, queue: [], root: nil)
+      attr_reader :value, :length, :queue, :root
+
+      def initialize(value: '', length: 0, queue: [], root: nil)
+        @value = value
+        @length = length
+        @queue = queue
+        @root = root
+      end
+
+      def align(n)
+        case n
+        when NilClass
+          self
+        when :root
+          IndentLevel.new(value: value, length: length, queue: queue, root: self)
+        when -Float::INFINITY
+          root || IndentLevel.new
+        when String
+          indent(StringAlignPart.new(n))
+        else
+          indent(n < 0 ? DedentPart : NumberAlignPart.new(n))
         end
+      end
 
-        def align(indent, n)
-          return indent unless n
-          return IndentLevel.new(value: indent.value, length: indent.length, queue: indent.queue, root: indent) if n == :root
-          return indent.root || Indenter.root if n == -Float::INFINITY
-          return generate_indent(indent, DedentPart) if n.is_a?(Integer) && n < 0
-    
-          generate_indent(indent, n.is_a?(String) ? StringAlignPart.new(n) : NumberAlignPart.new(n))
-        end
+      def indent(part = IndentPart)
+        next_value = ''
+        next_length = 0
+        next_queue = (part == DedentPart ? queue[0...-1] : [*queue, part])
 
-        def indent(indent)
-          generate_indent(indent, IndentPart)
-        end
-
-        private
-
-        def generate_indent(indent, part)
-          queue = (part == DedentPart ? indent.queue[0...-1] : [*indent.queue, part])
-    
-          value = ''
-          length = 0
+        last_spaces = 0
+  
+        add_spaces = ->(count) {
+          next_value << ' ' * count
+          next_length += count
+        }
+  
+        flush_spaces = -> {
+          add_spaces[last_spaces] if last_spaces > 0
           last_spaces = 0
-    
-          add_spaces = ->(count) {
-            value << ' ' * count
-            length += count
-          }
-    
-          flush_spaces = -> {
-            add_spaces[last_spaces] if last_spaces > 0
-            last_spaces = 0
-          }
-    
-          queue.each do |part|
-            case part
-            when IndentPart
-              flush_spaces.call
-              add_spaces.call(2)
-            when StringAlignPart
-              flush_spaces.call
-              value += part.n
-              length += part.n.length
-            when NumberAlignPart
-              last_spaces += part.n
-            end
+        }
+  
+        next_queue.each do |part|
+          case part
+          when IndentPart
+            flush_spaces.call
+            add_spaces.call(2)
+          when StringAlignPart
+            flush_spaces.call
+            next_value += part.n
+            next_length += part.n.length
+          when NumberAlignPart
+            last_spaces += part.n
           end
-    
-          flush_spaces.call
-          IndentLevel.new(value: value, length: length, queue: queue, root: indent.root)
         end
+  
+        flush_spaces.call
+
+        IndentLevel.new(
+          value: next_value,
+          length: next_length,
+          queue: next_queue,
+          root: root
+        )
       end
     end
   end
