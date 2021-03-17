@@ -116,6 +116,54 @@ module Document
   end
 
   class Printer
+    class Buffer
+      attr_reader :parts
+
+      def initialize
+        @parts = []
+      end
+
+      def <<(part)
+        @parts << part
+      end
+
+      def trim!
+        return 0 if parts.empty?
+
+        trimmed = 0
+
+        while parts.any? && parts.last.is_a?(String) && parts.last.match?(/\A[\t ]*\z/)
+          trimmed += parts.pop.length
+        end
+
+        if parts.any? && parts.last.is_a?(String)
+          length = parts.last.length
+          parts.last.gsub!(/[\t ]*\z/, '')
+          trimmed += length - parts.last.length
+        end
+
+        trimmed
+      end
+
+      def newline
+        parts << "\n"
+      end
+
+      def to_formatted
+        if parts.include?(Cursor)
+          before, around, after = parts.slice_when { |part| part == Cursor }.map(&:join)
+  
+          {
+            formatted: "#{before}#{around}#{after}",
+            cursor_node_start: before.length,
+            cursor_node_text: around
+          }
+        end
+  
+        { formatted: parts.join }
+      end
+    end
+
     MODE_BREAK = 1;
     MODE_FLAT = 2;
 
@@ -134,7 +182,7 @@ module Document
 
       pos = 0
       cmds = [[IndentLevel.new, MODE_BREAK, doc]]
-      out = []
+      out = Buffer.new
 
       should_remeasure = false
       line_suffixes = []
@@ -157,7 +205,7 @@ module Document
         when Align
           cmds << [ind.align(doc.n), mode, doc.contents]
         when Trim
-          pos -= trim(out)
+          pos -= out.trim!
         when Group
           if mode == MODE_FLAT && !should_remeasure
             cmds << [ind, doc.break ? MODE_BREAK : MODE_FLAT, doc.contents]
@@ -236,16 +284,18 @@ module Document
             cmds += line_suffixes.reverse
             line_suffixes = []
           elsif doc.literal
+            out.newline
+
             if ind.root
-              out += ["\n", ind.root.value]
+              out << ind.root.value
               pos = ind.root.length
             else
-              out << "\n"
               pos = 0
             end
           else
-            pos -= trim(out)
-            out += ["\n", ind.value]
+            pos -= out.trim!
+            out.newline
+            out << ind.value
             pos = ind.length
           end
         when BreakParent
@@ -260,17 +310,7 @@ module Document
         end
       end
 
-      if out.include?(Cursor)
-        before, around, after = out.slice_when { |part| part == Cursor }.map(&:join)
-
-        {
-          formatted: "#{before}#{around}#{after}",
-          cursor_node_start: before.length,
-          cursor_node_text: around
-        }
-      end
-
-      { formatted: out.join }
+      out.to_formatted
     end
 
     private
@@ -278,7 +318,7 @@ module Document
     def fits?(next_cmd, rest_cmds, width, must_be_flat = false)
       rest_idx = rest_cmds.length
       cmds = [next_cmd]
-      out = []
+      out = Buffer.new
 
       while width >= 0
         if cmds.empty?
@@ -304,7 +344,7 @@ module Document
         when Align
           cmds << [ind.align(doc.n), mode, doc.contents]
         when Trim
-          width += trim(out)
+          width += out.trim!
         when Group
           return false if doc.break && must_be_flat
 
@@ -334,24 +374,6 @@ module Document
       end
 
       false
-    end
-
-    def trim(out)
-      return 0 if out.empty?
-
-      trimmed = 0
-
-      while out.any? && out.last.is_a?(String) && out.last.match?(/\A[\t ]*\z/)
-        trimmed += out.pop.length
-      end
-    
-      if out.any? && out.last.is_a?(String)
-        length = out.last.length
-        out.last.gsub!(/[\t ]*\z/, '')
-        trimmed += length - out.last.length
-      end
-    
-      trimmed
     end
 
     class IndentLevel
