@@ -4,7 +4,6 @@ require 'set'
 module Document
   # These are container document nodes. They contain other nodes, markers,
   # strings, or arrays.
-  Concat = Struct.new(:parts)
   Indent = Struct.new(:contents)
   Align = Struct.new(:n, :contents)
   Group = Struct.new(:contents, :break)
@@ -26,15 +25,14 @@ module Document
   Line = LineType.new(soft: false, hard: false, literal: false)
   SoftLine = LineType.new(soft: true, hard: false, literal: false)
   HardLineType = LineType.new(soft: false, hard: true, literal: false)
-  HardLine = Concat.new([HardLineType, BreakParent])
+  HardLine = [HardLineType, BreakParent]
   LiteralLineType = LineType.new(soft: false, hard: true, literal: true)
-  LiteralLine = Concat.new([LiteralLineType, BreakParent])
+  LiteralLine = [LiteralLineType, BreakParent]
 
   # These are convience methods with shortcuts for creating the document nodes.
   # These methods map to the document builder commands from prettier here:
   # https://github.com/prettier/prettier/blob/main/src/document/doc-builders.js
   module Builders
-    def concat(parts); Concat.new(parts); end
     def indent(contents); Indent.new(contents); end
     def align(n, contents); Align.new(n, contents); end
     def group(contents); Group.new(contents, false); end
@@ -53,8 +51,8 @@ module Document
     def literalline; LiteralLine; end
     def cursor; Cursor; end
 
-    # Join is not a node in and of itself, it's just a convenient wrapper for a
-    # concat node that has an interspersed separator.
+    # Join is not a node in and of itself, it's just a convenient wrapper for an
+    # array node that has an interspersed separator.
     def join(sep, arr)
       res = []
       arr.each_with_index do |v, i|
@@ -62,7 +60,7 @@ module Document
         res << v
       end
 
-      Concat.new(res)
+      res
     end
 
     def add_alignment_to_doc(doc, size)
@@ -113,7 +111,7 @@ module Document
           case doc
           when Array
             doc.reverse_each { |part| stack << part }
-          when Concat, Fill
+          when Fill
             doc.parts.reverse_each { |part| stack << part }
           when IfBreak
             stack << doc.break_contents if doc.break_contents
@@ -358,8 +356,6 @@ module Document
           position += doc.length
         when Array
           doc.reverse_each { |part| commands << [indent, mode, part] }
-        when Concat
-          doc.parts.reverse_each { |part| commands << [indent, mode, part] }
         when Cursor
           buffer << doc
         when Indent
@@ -408,7 +404,7 @@ module Document
           second_content = doc.parts[2]
 
           first_and_second_content_flat_cmd =
-            [indent, MODE_FLAT, Concat.new([content, whitespace, second_content])]
+            [indent, MODE_FLAT, [content, whitespace, second_content]]
 
           if fits?(first_and_second_content_flat_cmd, [], rem)
             commands += [remaining_cmd, whitespace_flat_cmd, content_flat_cmd]
@@ -517,8 +513,6 @@ module Document
           remaining -= doc.length
         when Array
           doc.reverse_each { |part| commands << [ind, mode, part] }
-        when Concat
-          doc.parts.reverse_each { |part| commands << [ind, mode, part] }
         when Indent
           commands << [ind.indent, mode, doc.contents]
         when Align
@@ -575,7 +569,7 @@ module Document
     
         Document::Align.new(n, load(json['contents']))
       when 'concat'
-        Document::Concat.new(load(json['parts']))
+        load(json['parts'])
       when 'group'
         Document::Group.new(load(json['contents']), json['break'])
       when 'break-parent'
@@ -616,16 +610,16 @@ class ExampleNode
   include Document::Builders
 
   def to_doc
-    group(concat([
-      group(concat(["class", " ", "Foo"])),
-      indent(concat([
+    group([
+      group(["class", " ", "Foo"]),
+      indent([
         line,
         "1",
         break_parent
-      ])),
+      ]),
       hardline,
       "end"
-    ]))
+    ])
   end
 end
 
